@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El caballerito trolo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- HUD -->
+        <div id="hud" class="hidden">
+<div class="hud-top">
+    <div style="display: flex; flex-direction: column; gap: 5px;">
+        <div id="hp-bar-container"><div id="hp-bar"></div></div>
+        <div id="stamina-bar-container" style="width: 300px; height: 10px; background: #333; border: 2px solid #fff;"><div id="stamina-bar" style="width: 100%; height: 100%; background: #00ffff; transition: width 0.1s;"></div></div>
+    </div>
+    <div class="stats">
+        <span id="essence-display">Esencia: 0</span> | 
+        <span id="room-display">Sala: 0 (Hub)</span> |
+        <span id="secret-display" style="color: rgb(17, 0, 255); display: none;">Secretos: 0/3</span>
+    </div>
+</div>
+            <div id="boss-hp-container" class="hidden">
+                <div id="boss-name">Miniboss</div>
+                <div id="boss-hp-bg"><div id="boss-hp-bar"></div></div>
+            </div>
+        </div>
+
+        <!-- Pantallas de UI -->
+        <div id="ui-layer">
+            <div id="screen-start" class="screen">
+                <h1>Vesper's Ascent</h1>
+
+                <button onclick="startGame()">Comenzar</button>
+            </div>
+            
+            <div id="screen-pause" class="screen hidden">
+                <h1>Pausado</h1>
+                <button onclick="togglePause()">Continuar</button>
+            </div>
+
+            <div id="screen-death" class="screen hidden">
+                <h1 style="color: #ff3333;">GG bro, te bajaron</h1>
+                <p id="death-stats"></p>
+                <button onclick="returnToHub()">Volver al Hub</button>
+            </div>
+
+            <div id="screen-win" class="screen hidden">
+                <h1 style="color: #33ffaa;">El Ciclo se Rompe</h1>
+                <p>Has conquistado la cima y derrotado al Arquitecto.</p>
+                <p id="win-stats"></p>
+                <button onclick="returnToHub()">Jugar de Nuevo</button>
+            </div>
+
+            <div id="screen-shop" class="screen hidden">
+                <h2>El Mercader de Cenizas</h2>
+                <p>Esencia disponible: <span id="shop-essence">0</span></p>
+                <div class="shop-grid">
+                    <button class="shop-btn" onclick="buyUpgrade('hp')">+1 Vida Max (Coste: <span id="cost-hp">50</span>)</button>
+                    <button class="shop-btn" onclick="buyUpgrade('dmg')">+1 Daño (Coste: <span id="cost-dmg">50</span>)</button>
+                    <button class="shop-btn" id="btn-dash" onclick="buyUpgrade('dash')">+1 Dash Extra (Niv. <span id="lvl-dash">1</span>/3) - Coste: <span id="cost-dash">100</span></button>
+                    <button class="shop-btn" onclick="buyUpgrade('speed')">+Velocidad (Coste: <span id="cost-speed">40</span>)</button>
+                    <button id="btn-dj" class="shop-btn" style="grid-column: span 2; border-color: #aaa;" onclick="buyDoubleJump()">Doble Salto (Coste: 125)</button>
+                </div>
+                <button style="margin-top:20px;" onclick="closeShop()">Salir</button>
+            </div>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>
