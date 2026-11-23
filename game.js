@@ -24,7 +24,7 @@ const state = {
 
 const keys = {};
 const justPressed = {};
-let camera = { x: 0, y: 0, shakeTime: 0, shakeMagnitude: 0 };
+let camera = { x: 0, y: 0, shakeTime: 0, shakeDuration: 0, shakeMagnitude: 0 };
 let lastTime = 0, hitstop = 0;
 let transition = { active: false, alpha: 0, speed: 3.0, phase: 'none', callback: null };
 
@@ -140,7 +140,11 @@ function playSound(type) {
 
 // --- UTILIDADES ---
 const rectIntersect = (r1, r2) => !(r2.left >= r1.right || r2.right <= r1.left || r2.top >= r1.bottom || r2.bottom <= r1.top);
-function screenShake(mag, time) { camera.shakeMagnitude = mag; camera.shakeTime = time; }
+function screenShake(mag, time) {
+    camera.shakeMagnitude = mag;
+    camera.shakeTime = time;
+    camera.shakeDuration = time;
+}
 function doHitstop(time) { hitstop = time; }
 
 // --- ENTIDADES Y SISTEMAS ---
@@ -444,7 +448,7 @@ class Player {
                 if (rectIntersect(hr, er) && e.invul <= 0) {
                     e.takeDamage(state.upgrades.dmg);
                     spawnParticles(e.x + e.w / 2, e.y + e.h / 2, '#fff', 10);
-                    doHitstop(0.05);
+                    doHitstop(0.012);
                     screenShake(5, 0.1);
                     if (hb.isPogo) {
                         this.vy = -this.jumpForce * 1.2;
@@ -462,7 +466,7 @@ class Player {
         this.hp -= dmg;
         this.invulTimer = 1.0;
         playSound('hit');
-        screenShake(15, 0.2);
+        screenShake(24, 0.28); // <-- AQUÍ SE MODIFICA LA FUERZA Y DURACIÓN DEL SHAKE AL RECIBIR DAÑO
         doHitstop(0.1);
         updateHUD();
         if (this.hp <= 0) gameOver();
@@ -965,10 +969,13 @@ function update(dt) {
         camera.y = baseCam.y;
     }
 
+    // Temblor progresivo de cámara (shake)
     if (camera.shakeTime > 0) {
         camera.shakeTime -= dt;
-        camera.x += (Math.random() - 0.5) * camera.shakeMagnitude;
-        camera.y += (Math.random() - 0.5) * camera.shakeMagnitude;
+        const ratio = camera.shakeDuration > 0 ? Math.max(0, camera.shakeTime / camera.shakeDuration) : 1;
+        const currentMag = camera.shakeMagnitude * ratio;
+        camera.x += (Math.random() - 0.5) * 2 * currentMag;
+        camera.y += (Math.random() - 0.5) * 2 * currentMag;
     }
 }
 
@@ -1010,9 +1017,18 @@ function draw() {
 
     ctx.restore();
 
-    let grad = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, canvas.height / 3, canvas.width / 2, canvas.height / 2, canvas.width);
-    grad.addColorStop(0, 'rgba(0,0,0,0)');
-    grad.addColorStop(1, 'rgba(0,0,0,0.8)');
+    // Viñeta ambiental o viñeta roja pulsante cuando el jugador está a 1 golpe
+    let grad = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, canvas.height / 4, canvas.width / 2, canvas.height / 2, canvas.width * 0.8);
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+
+    if (player && player.hp === 1) {
+        const pulse = 0.55 + Math.sin(Date.now() * 0.008) * 0.2;
+        grad.addColorStop(0.65, `rgba(200, 0, 0, ${pulse * 0.55})`);
+        grad.addColorStop(1, `rgba(240, 0, 0, ${pulse})`);
+    } else {
+        grad.addColorStop(1, 'rgba(0,0,0,0.92)');
+    }
+
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -1082,8 +1098,21 @@ function togglePause() {
 }
 
 function openShop() {
+    const shopScreen = document.getElementById('screen-shop');
+    const wasClosed = shopScreen.classList.contains('hidden');
     state.isPaused = true;
-    document.getElementById('screen-shop').classList.remove('hidden');
+
+    if (wasClosed) {
+        shopScreen.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+        shopScreen.style.opacity = '0';
+        shopScreen.style.transform = 'scale(0.96)';
+        shopScreen.classList.remove('hidden');
+        requestAnimationFrame(() => {
+            shopScreen.style.opacity = '1';
+            shopScreen.style.transform = 'scale(1)';
+        });
+    }
+
     document.getElementById('shop-essence').innerText = state.essence;
     document.getElementById('cost-hp').innerText = state.costs.hp;
     document.getElementById('cost-dmg').innerText = state.costs.dmg;
@@ -1117,8 +1146,17 @@ function openShop() {
 }
 
 function closeShop() {
-    state.isPaused = false;
-    document.getElementById('screen-shop').classList.add('hidden');
+    const shopScreen = document.getElementById('screen-shop');
+    shopScreen.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+    shopScreen.style.opacity = '0';
+    shopScreen.style.transform = 'scale(0.96)';
+
+    setTimeout(() => {
+        shopScreen.classList.add('hidden');
+        shopScreen.style.opacity = '';
+        shopScreen.style.transform = '';
+        state.isPaused = false;
+    }, 200);
 }
 
 function buyDoubleJump() {
