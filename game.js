@@ -26,6 +26,15 @@ const keys = {};
 const justPressed = {};
 let camera = { x: 0, y: 0, shakeTime: 0, shakeMagnitude: 0 };
 let lastTime = 0, hitstop = 0;
+let transition = { active: false, alpha: 0, speed: 3.0, phase: 'none', callback: null };
+
+function startRoomTransition(onMiddleCallback) {
+    if (transition.active) return;
+    transition.active = true;
+    transition.alpha = 0;
+    transition.phase = 'out';
+    transition.callback = onMiddleCallback;
+}
 
 // Controles: Flechas para moverse/apuntar, Z saltar, X atacar, C dash, E interactuar
 const CONTROLS = {
@@ -53,13 +62,13 @@ function clearJustPressed() {
     }
 }
 
-// Cámara estática centrada en la sala de 1400px de ancho
+// Cámara estática centrada en la sala de 1400px de ancho (y centrada entre techo -260 y suelo 600)
 function getStaticCamera() {
     const roomCenterX = 700;
-    const roomCenterY = 220;
+    const roomCenterY = 180;
     return {
-        x: roomCenterX - canvas.width / 2,
-        y: roomCenterY - canvas.height / 2
+        x: Math.round(roomCenterX - canvas.width / 2),
+        y: Math.round(roomCenterY - canvas.height / 2)
     };
 }
 
@@ -537,38 +546,33 @@ class Enemy {
                 this.swordHitbox = null;
             }
         }
+
         if (this.type <= 2) {
-         if (dist < 500) {
-        this.facing = (px >= cx) ? 1 : -1;
+            if (dist < 500) {
+                this.facing = (px >= cx) ? 1 : -1;
 
-        // Distancia reducida: tienen que acercarse mucho para atacar
-        if (dist <= 52 && this.swordCooldown <= 0) {
-            const aimAngle = Math.atan2(py - cy, px - cx);
-            if (Number.isFinite(aimAngle)) {
-                this.swordCooldown = 1.1;
-                const reach = 35;      // Tajo corto cuerpo a cuerpo
-                const halfThick = 14;  // Grosor del tajo
+                // Distancia reducida: tienen que acercarse mucho para atacar
+                if (dist <= 52 && this.swordCooldown <= 0) {
+                    const aimAngle = Math.atan2(py - cy, px - cx);
+                    if (Number.isFinite(aimAngle)) {
+                        this.swordCooldown = 1.1;
+                        const reach = 35;      // Tajo corto cuerpo a cuerpo
+                        const halfThick = 14;  // Grosor del tajo
 
-                this.swordHitbox = {
-                    angle: aimAngle,
-                    reach: reach,
-                    halfThick: halfThick,
-                    life: 0.14
-                };
+                        this.swordHitbox = {
+                            angle: aimAngle,
+                            reach: reach,
+                            halfThick: halfThick,
+                            life: 0.14
+                        };
+                    }
+                } else if (dist > 34) {
+                    // Siguen acercándose hasta quedar pegados al rango de espada
+                    dx = Math.cos(angle) * this.speed * dt;
+                    dy = Math.sin(angle) * this.speed * dt;
+                }
             }
-        }
-    
-    
-        else if (dist > 34) {
-            // Siguen acercándose hasta quedar pegados al rango de espada
-            dx = Math.cos(angle) * this.speed * dt;
-            dy = Math.sin(angle) * this.speed * dt;
-        }
-    }
-}
-        
-        
-        else if (this.type <= 4) {
+        } else if (this.type <= 4) {
             if (dist > 250 && dist < 600) {
                 dx = Math.cos(angle) * this.speed * dt;
                 dy = Math.sin(angle) * this.speed * dt;
@@ -858,6 +862,29 @@ function gameLoop(timestamp) {
 }
 
 function update(dt) {
+    // Manejo del fundido entre salas
+    if (transition.active) {
+        if (transition.phase === 'out') {
+            transition.alpha += transition.speed * dt;
+            if (transition.alpha >= 1) {
+                transition.alpha = 1;
+                if (transition.callback) {
+                    transition.callback();
+                    transition.callback = null;
+                }
+                transition.phase = 'in';
+            }
+            return;
+        } else if (transition.phase === 'in') {
+            transition.alpha -= transition.speed * dt;
+            if (transition.alpha <= 0) {
+                transition.alpha = 0;
+                transition.phase = 'none';
+                transition.active = false;
+            }
+        }
+    }
+
     player.update(dt);
 
     for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -892,18 +919,20 @@ function update(dt) {
         let ir = { left: int.x, right: int.x + int.w, top: int.y, bottom: int.y + int.h };
         if (rectIntersect(pr, ir) && isActionJustPressed('interact') && (!int.doorTimer || int.doorTimer <= 0)) {
             if (int.type === 'door') {
-                projectiles = [];
-                particles = [];
+                startRoomTransition(() => {
+                    projectiles = [];
+                    particles = [];
 
-                if (state.room === 0) {
-                    state.room = state.targetRoom || 1;
-                } else {
-                    state.targetRoom = state.room + 1;
-                    state.room = 0;
-                }
+                    if (state.room === 0) {
+                        state.room = state.targetRoom || 1;
+                    } else {
+                        state.targetRoom = state.room + 1;
+                        state.room = 0;
+                    }
 
-                generateRoom(state.room);
-                updateHUD();
+                    generateRoom(state.room);
+                    updateHUD();
+                });
                 break;
             } else if (int.type === 'shop') {
                 openShop();
@@ -916,10 +945,25 @@ function update(dt) {
         }
     }
 
-    // Cámara estática centrada en la sala
+    // Cámara estática centrada en la sala (con seguimiento suave solo si la ventana es más pequeña que la sala)
     const baseCam = getStaticCamera();
-    camera.x = baseCam.x;
-    camera.y = baseCam.y;
+    if (canvas.width < 1480) {
+        const minX = -40;
+        const maxX = 1440 - canvas.width;
+        const targetX = Math.max(minX, Math.min(maxX, (player.x + player.w / 2) - canvas.width / 2));
+        camera.x += (targetX - camera.x) * 8 * dt;
+    } else {
+        camera.x = baseCam.x;
+    }
+
+    if (canvas.height < 960) {
+        const minY = -260;
+        const maxY = 700 - canvas.height;
+        const targetY = Math.max(minY, Math.min(maxY, (player.y + player.h / 2) - canvas.height / 2));
+        camera.y += (targetY - camera.y) * 8 * dt;
+    } else {
+        camera.y = baseCam.y;
+    }
 
     if (camera.shakeTime > 0) {
         camera.shakeTime -= dt;
@@ -971,6 +1015,12 @@ function draw() {
     grad.addColorStop(1, 'rgba(0,0,0,0.8)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Dibujar fundido suave al cambiar de sala
+    if (transition.alpha > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${transition.alpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 }
 
 // --- GESTIÓN DE ESTADO Y UI ---
@@ -993,20 +1043,25 @@ function startGame() {
     player = new Player(120, 500);
     state.room = 0;
     generateRoom(0);
+    const cam = getStaticCamera();
+    camera.x = cam.x;
+    camera.y = cam.y;
     updateHUD();
     ui.hud.classList.remove('hidden');
     requestAnimationFrame(gameLoop);
 }
 
 function returnToHub() {
-    document.getElementById('screen-death').classList.add('hidden');
-    document.getElementById('screen-win').classList.add('hidden');
-    if (ui.bossContainer) ui.bossContainer.classList.add('hidden');
-    state.isPaused = false;
-    state.room = 0;
-    player.hp = player.maxHp;
-    generateRoom(0);
-    updateHUD();
+    startRoomTransition(() => {
+        document.getElementById('screen-death').classList.add('hidden');
+        document.getElementById('screen-win').classList.add('hidden');
+        if (ui.bossContainer) ui.bossContainer.classList.add('hidden');
+        state.isPaused = false;
+        state.room = 0;
+        player.hp = player.maxHp;
+        generateRoom(0);
+        updateHUD();
+    });
 }
 
 function gameOver() {
