@@ -17,8 +17,11 @@ const state = {
     secrets: 0,
     isPlaying: false,
     isPaused: false,
-    upgrades: { hp: 5, dmg: 1, dashLevel: 1, speed: 1, doubleJump: false },
-    costs: { hp: 50, dmg: 50, dash: 100, speed: 40, doubleJump: 125 },
+    mana: 100,
+    maxMana: 100,
+    manaRegen: 5,
+    upgrades: { hp: 5, dmg: 1, dashLevel: 1, speed: 1, doubleJump: false, maxManaLevel: 1, spellLevel: 1, bowLevel: 1 },
+    costs: { hp: 50, dmg: 50, dash: 100, speed: 40, doubleJump: 125, mana: 45, spell: 60, bow: 55 },
     doubleJumpActive: false
 };
 
@@ -45,7 +48,9 @@ const CONTROLS = {
     jump: ['KeyZ'],
     attack: ['KeyX'],
     dash: ['KeyC'],
-    interact: ['KeyE']
+    interact: ['KeyE'],
+    spell: ['KeyA'],
+    bow: ['KeyS']
 };
 
 function isActionHeld(action) {
@@ -81,7 +86,9 @@ const ui = {
     bossContainer: document.getElementById('boss-hp-container'),
     bossHp: document.getElementById('boss-hp-bar'),
     bossName: document.getElementById('boss-name'),
-    secretDisplay: document.getElementById('secret-display')
+    secretDisplay: document.getElementById('secret-display'),
+    manaBar: document.getElementById('mana-bar'),
+    manaText: document.getElementById('mana-display')
 };
 
 // --- AUDIO PROCEDURAL (Web Audio API) ---
@@ -202,11 +209,21 @@ class Platform {
 }
 
 class Projectile {
-    constructor(x, y, vx, vy, isEnemy, color, size, lifetime = 3) {
+    constructor(x, y, vx, vy, isEnemy, color, size, lifetime = 3, opts = {}) {
         this.x = x; this.y = y; this.vx = vx; this.vy = vy;
         this.isEnemy = isEnemy; this.color = color; this.size = size; this.life = lifetime;
+        this.dmg = opts.dmg || 1;
+        this.gravity = opts.gravity || 0;
+        this.pierce = Boolean(opts.pierce);
+        this.hitIds = new Set();
+        this.shape = opts.shape || 'circle';
+        this.width = opts.width || size * 2;
+        this.height = opts.height || size * 2;
     }
     update(dt) {
+        if (this.gravity) {
+            this.vy += this.gravity * dt;
+        }
         this.x += this.vx * dt;
         this.y += this.vy * dt;
         this.life -= dt;
@@ -214,9 +231,13 @@ class Projectile {
     }
     draw(ctx) {
         ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fill();
+        if (this.shape === 'rect') {
+            ctx.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
+        } else {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 }
 
@@ -249,6 +270,8 @@ class Player {
         this.dashTimer = 0;
         this.dashDir = { x: 0, y: 0 };
         this.attackTimer = 0;
+        this.spellTimer = 0;
+        this.bowTimer = 0;
         this.invulTimer = 0;
         this.hitboxes = [];
         this.facing = 1;
@@ -262,8 +285,14 @@ class Player {
     update(dt) {
         if (this.invulTimer > 0) this.invulTimer -= dt;
         if (this.attackTimer > 0) this.attackTimer -= dt;
+        if (this.spellTimer > 0) this.spellTimer -= dt;
+        if (this.bowTimer > 0) this.bowTimer -= dt;
         if (this.jumpBuffer > 0) this.jumpBuffer -= dt;
         if (this.dashCooldown > 0) this.dashCooldown -= dt;
+
+        if (state.mana < state.maxMana) {
+            state.mana = Math.min(state.maxMana, state.mana + state.manaRegen * dt);
+        }
 
         if (this.stamina < this.maxStamina) {
             let regenRate = this.grounded ? 2.5 : 1.0;
@@ -458,6 +487,87 @@ class Player {
                 }
             }
             if (hb.life <= 0) this.hitboxes.splice(i, 1);
+        }
+
+        // Disparo recto estilo Hollow Knight (KeyA)
+        const spellCost = 45;
+        if (isActionJustPressed('spell') && this.spellTimer <= 0 && state.mana >= spellCost) {
+            state.mana -= spellCost;
+            this.spellTimer = 0.35;
+            playSound('shoot');
+
+            let aimX = 0;
+            if (isActionHeld('left')) aimX -= 1;
+            if (isActionHeld('right')) aimX += 1;
+            if (aimX === 0) aimX = this.facing;
+
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            const spellDmg = 2 + (state.upgrades.spellLevel - 1) * 2;
+            const spellWidth = 34 + (state.upgrades.spellLevel - 1) * 6;
+            const spellHeight = 20 + (state.upgrades.spellLevel - 1) * 4;
+
+            projectiles.push(new Projectile(
+                cx + aimX * 18,
+                cy,
+                aimX * 720,
+                0,
+                false,
+                '#7dd3fc',
+                12,
+                0.75,
+                {
+                    dmg: spellDmg,
+                    pierce: true,
+                    shape: 'rect',
+                    width: spellWidth,
+                    height: spellHeight
+                }
+            ));
+            spawnParticles(cx + aimX * 14, cy, '#bae6fd', 8);
+            updateHUD();
+        }
+
+        // Disparo con arco (KeyS)
+        const bowCost = 30;
+        if (isActionJustPressed('bow') && this.bowTimer <= 0 && state.mana >= bowCost) {
+            state.mana -= bowCost;
+            this.bowTimer = 0.24;
+            playSound('shoot');
+
+            let dx = 0, dy = 0;
+            if (isActionHeld('left')) dx -= 1;
+            if (isActionHeld('right')) dx += 1;
+            if (isActionHeld('up')) dy -= 1;
+            if (isActionHeld('down')) dy += 1;
+            if (dx === 0 && dy === 0) dx = this.facing;
+
+            const mag = Math.hypot(dx, dy) || 1;
+            const nx = dx / mag;
+            const ny = dy / mag;
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            const bowSpeed = 820 + (state.upgrades.bowLevel - 1) * 80;
+            const bowDmg = 1 + state.upgrades.bowLevel;
+            const arrowGravity = (dy === 0) ? 260 : 420;
+
+            projectiles.push(new Projectile(
+                cx + nx * 16,
+                cy + ny * 16,
+                nx * bowSpeed,
+                ny * bowSpeed - (dy === 0 ? 45 : 0),
+                false,
+                '#facc15',
+                6,
+                1.1,
+                {
+                    dmg: bowDmg,
+                    gravity: arrowGravity,
+                    pierce: false
+                }
+            ));
+            spawnParticles(cx + nx * 12, cy + ny * 12, '#fef08a', 6);
+            updateHUD();
         }
     }
 
@@ -699,6 +809,8 @@ class Enemy {
             spawnParticles(this.x + this.w / 2, this.y + this.h / 2, '#ffaa00', 30);
             playSound('coin');
             state.essence += (this.type >= 8 ? 50 : this.type * 2);
+            const manaGain = this.type >= 8 ? 45 : 14 + this.type * 2;
+            state.mana = Math.min(state.maxMana, state.mana + manaGain);
             updateHUD();
             if (this.type >= 8) {
                 if (ui.bossContainer) ui.bossContainer.classList.add('hidden');
@@ -896,10 +1008,36 @@ function update(dt) {
         if (p.life <= 0) { projectiles.splice(i, 1); continue; }
 
         let pr = { left: player.x, right: player.x + player.w, top: player.y, bottom: player.y + player.h };
-        let pRect = { left: p.x - p.size, right: p.x + p.size, top: p.y - p.size, bottom: p.y + p.size };
+        let halfW = p.shape === 'rect' ? p.width / 2 : p.size;
+        let halfH = p.shape === 'rect' ? p.height / 2 : p.size;
+        let pRect = { left: p.x - halfW, right: p.x + halfW, top: p.y - halfH, bottom: p.y + halfH };
+
         if (p.isEnemy && rectIntersect(pr, pRect) && player.invulTimer <= 0) {
             player.takeDamage(1);
             projectiles.splice(i, 1);
+            continue;
+        }
+
+        if (!p.isEnemy) {
+            let removeProj = false;
+            for (let eIdx = 0; eIdx < enemies.length; eIdx++) {
+                const e = enemies[eIdx];
+                if (e.hp <= 0 || p.hitIds.has(eIdx)) continue;
+                const er = { left: e.x, right: e.x + e.w, top: e.y, bottom: e.y + e.h };
+                if (rectIntersect(pRect, er)) {
+                    p.hitIds.add(eIdx);
+                    e.takeDamage(p.dmg);
+                    spawnParticles(e.x + e.w / 2, e.y + e.h / 2, p.color, 10);
+                    doHitstop(0.015);
+                    if (!p.pierce) {
+                        removeProj = true;
+                        break;
+                    }
+                }
+            }
+            if (removeProj) {
+                projectiles.splice(i, 1);
+            }
         }
     }
 
@@ -1032,6 +1170,22 @@ function draw() {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // Si el HTML aún no tiene #mana-bar, dibujar una barra compacta de maná en esquina superior izquierda
+    if (state.isPlaying && player && !document.getElementById('mana-bar')) {
+        const bx = 20, by = 50, bw = 180, bh = 12;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.fillRect(bx, by, bw, bh);
+        const ratio = Math.max(0, Math.min(1, state.mana / state.maxMana));
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(bx, by, bw * ratio, bh);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx, by, bw, bh);
+        ctx.fillStyle = '#e0f2fe';
+        ctx.font = '10px monospace';
+        ctx.fillText(`MANÁ ${Math.floor(state.mana)}/${state.maxMana} [A: Onda | S: Arco]`, bx, by + bh + 12);
+    }
+
     // Dibujar fundido suave al cambiar de sala
     if (transition.alpha > 0) {
         ctx.fillStyle = `rgba(0, 0, 0, ${transition.alpha})`;
@@ -1046,6 +1200,14 @@ function updateHUD() {
     let staminaBar = document.getElementById('stamina-bar');
     if (staminaBar) {
         staminaBar.style.width = (player.stamina / player.maxStamina) * 100 + '%';
+    }
+    let manaBar = ui.manaBar || document.getElementById('mana-bar');
+    if (manaBar) {
+        manaBar.style.width = Math.max(0, Math.min(100, (state.mana / state.maxMana) * 100)) + '%';
+    }
+    let manaText = ui.manaText || document.getElementById('mana-display');
+    if (manaText) {
+        manaText.innerText = `Maná: ${Math.floor(state.mana)}/${state.maxMana}`;
     }
     ui.essence.innerText = `Esencia: ${state.essence}`;
     ui.room.innerText = `Sala: ${state.room === 0 ? 'Hub' : state.room}`;
@@ -1097,10 +1259,38 @@ function togglePause() {
     else document.getElementById('screen-pause').classList.add('hidden');
 }
 
+function ensureShopPowerButtons(shopScreen) {
+    if (!shopScreen || document.getElementById('mana-shop-controls')) return;
+    const container = document.createElement('div');
+    container.id = 'mana-shop-controls';
+    container.style.cssText = 'margin-top: 12px; display: flex; flex-direction: column; gap: 8px; align-items: center;';
+
+    const makeBtn = (id, label, onClick) => {
+        const b = document.createElement('button');
+        b.id = id;
+        b.innerText = label;
+        b.style.cssText = 'padding: 8px 12px; background: #1e293b; color: #f8fafc; border: 1px solid #38bdf8; cursor: pointer; font-family: inherit; font-size: 11px;';
+        b.onclick = onClick;
+        return b;
+    };
+
+    container.appendChild(makeBtn('btn-upgrade-mana', '', () => buyUpgrade('mana')));
+    container.appendChild(makeBtn('btn-upgrade-spell', '', () => buyUpgrade('spell')));
+    container.appendChild(makeBtn('btn-upgrade-bow', '', () => buyUpgrade('bow')));
+
+    const closeBtn = shopScreen.querySelector('button[onclick*="closeShop"]');
+    if (closeBtn && closeBtn.parentElement) {
+        closeBtn.parentElement.insertBefore(container, closeBtn);
+    } else {
+        shopScreen.appendChild(container);
+    }
+}
+
 function openShop() {
     const shopScreen = document.getElementById('screen-shop');
     const wasClosed = shopScreen.classList.contains('hidden');
     state.isPaused = true;
+    ensureShopPowerButtons(shopScreen);
 
     if (wasClosed) {
         shopScreen.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
@@ -1117,6 +1307,19 @@ function openShop() {
     document.getElementById('cost-hp').innerText = state.costs.hp;
     document.getElementById('cost-dmg').innerText = state.costs.dmg;
     document.getElementById('cost-speed').innerText = state.costs.speed;
+
+    const btnMana = document.getElementById('btn-upgrade-mana');
+    if (btnMana) {
+        btnMana.innerText = `Maná Máx. y Regen (Nv.${state.upgrades.maxManaLevel}) - Coste: ${state.costs.mana}`;
+    }
+    const btnSpell = document.getElementById('btn-upgrade-spell');
+    if (btnSpell) {
+        btnSpell.innerText = `Disparo Onda [A] (Nv.${state.upgrades.spellLevel}) - Coste: ${state.costs.spell}`;
+    }
+    const btnBow = document.getElementById('btn-upgrade-bow');
+    if (btnBow) {
+        btnBow.innerText = `Arco [S] (Nv.${state.upgrades.bowLevel}) - Coste: ${state.costs.bow}`;
+    }
 
     let btnDash = document.getElementById('btn-dash');
     let lvlDash = document.getElementById('lvl-dash');
@@ -1197,6 +1400,18 @@ function buyUpgrade(type) {
             if (type === 'hp') { state.upgrades.hp += 1; player.maxHp = state.upgrades.hp; player.hp = player.maxHp; }
             if (type === 'dmg') state.upgrades.dmg += 1;
             if (type === 'speed') state.upgrades.speed += 0.1;
+            if (type === 'mana') {
+                state.upgrades.maxManaLevel += 1;
+                state.maxMana += 25;
+                state.manaRegen += 3;
+                state.mana = state.maxMana;
+            }
+            if (type === 'spell') {
+                state.upgrades.spellLevel += 1;
+            }
+            if (type === 'bow') {
+                state.upgrades.bowLevel += 1;
+            }
             state.costs[type] = Math.floor(cost * 1.5);
         }
         openShop();
